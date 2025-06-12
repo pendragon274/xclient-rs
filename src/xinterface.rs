@@ -1,7 +1,6 @@
 #[warn(unused_imports)]
 use std::fmt::{Display, Formatter};
-use std::io::Write;
-use crate::sock::{u8_util, SockError, Socket};
+use crate::sock::{SockError, Socket};
 
 #[derive(Debug)]
 pub enum XInterfaceError{
@@ -36,49 +35,94 @@ impl XInterface {
         }
     }*/
 
-    pub fn auth_failure_read(&mut self) -> Result<String, XInterfaceError>{
-        Ok(String::from("Auth failure."))
+    fn auth_failure_read(&mut self) -> Result<String, XInterfaceError>{
+        let reason_len = self.x_socket.read_serializable::<u8>(1)?;
+        self.x_socket.read_serializable::<u16>(2)?; //Major version
+        self.x_socket.read_serializable::<u16>(2)?; //Minor version
+        let pad_size = self.x_socket.read_serializable::<u16>(2)?;
+        let reason = self.x_socket.read_serializable::<String>(reason_len as usize)?;
+        self.x_socket.read_discard_bytes((pad_size as usize * 4) - reason_len as usize)?;
+
+        Ok(reason.trim().to_string())
     }
 
-    pub fn auth_requested_read(&mut self) -> Result<String, XInterfaceError>{
-        Ok(String::from("Auth requested."))
+    fn auth_requested_read(&mut self) -> Result<String, XInterfaceError>{ //I honestly have zero idea what, if anything, would lead to this path, but it is in the documentation.
+        self.x_socket.read_discard_bytes(5)?;
+        let reason_len = self.x_socket.read_serializable::<u16>(2)?;
+        let reason = self.x_socket.read_serializable::<String>(reason_len as usize)?;
+
+        Ok(reason.trim().to_string())
     }
 
-    pub fn auth_success_read(&mut self) -> Result<(), XInterfaceError>{
-        Ok(())
+    #[allow(unused_variables)]
+    fn auth_success_read(mut self) -> Result<Self, XInterfaceError>{
+        //*****Preliminary Reads*****
+        self.x_socket.read_discard_bytes(1)?;
+        self.x_socket.read_serializable::<u16>(2)?; //Major version
+        self.x_socket.read_serializable::<u16>(2)?; //Minor version
+        let pad_indicator = self.x_socket.read_serializable::<u16>(2)?;              //8+2n+(v+p+m)/4
+        let release_number = self.x_socket.read_serializable::<u32>(4)?;
+        let resource_id_base = self.x_socket.read_serializable::<u32>(4)?;
+        let resource_id_mask = self.x_socket.read_serializable::<u32>(4)?;
+        let motion_buffer_size = self.x_socket.read_serializable::<u32>(4)?;
+        let vendor_len = self.x_socket.read_serializable::<u16>(2)?;                 //v
+        let maximum_request_length = self.x_socket.read_serializable::<u16>(2)?;
+        let screen_count = self.x_socket.read_serializable::<u8>(1)?;
+        let pixmap_format_count = self.x_socket.read_serializable::<u8>(1)?;         //n
+        let image_byte_order = self.x_socket.read_serializable::<u8>(1)?;
+        let bitmap_format_bit_order = self.x_socket.read_serializable::<u8>(1)?;
+        let bitmap_format_scanline_unit = self.x_socket.read_serializable::<u8>(1)?;
+        let bitmap_format_scanline_pad = self.x_socket.read_serializable::<u8>(1)?;
+        let min_keycode = self.x_socket.read_serializable::<u8>(1)?;
+        let max_keycode = self.x_socket.read_serializable::<u8>(1)?;
+        self.x_socket.read_discard_bytes(4)?;
+        let vendor = self.x_socket.read_serializable::<String>(vendor_len as usize)?;
+        let pad_len = self.x_socket.read_pad(4)?;                  //p
+        let mut pixmap_formats: Vec<Vec<u8>> = Vec::with_capacity(pixmap_format_count as usize);
+        for _ in 0..pixmap_format_count{
+            pixmap_formats.push(self.x_socket.read_bytes(8)?);
+        }
+        let _screens: Vec<Vec<u8>> = Vec::with_capacity(screen_count as usize);
+        for _ in 0..screen_count {
+
+        }
+        //let roots = ((((pad_indicator-8)-(2*pixmap_format_count as u16))*4) - vendor_len) - pad_len as u16;
+
+        Ok(self)
+    }
+
+    fn send_authentication(&mut self, auth_name: Vec<u8>, auth_data: Vec<u8>) -> Result<u8, XInterfaceError>{
+        self.x_socket.write_all(vec![0x6C, 0, 11, 0, 0, 0])?;
+        self.x_socket.write_serializable(auth_name.len() as u16)?;
+        self.x_socket.write_serializable(auth_data.len() as u16)?;
+        self.x_socket.write_all(vec![0, 0])?;
+        self.x_socket.write_all(auth_name)?;
+        self.x_socket.write_pad(4)?;
+        self.x_socket.write_all(auth_data)?;
+        self.x_socket.write_pad(4)?;
+        self.x_socket.flush_all()?;
+
+        Ok(self.x_socket.read_serializable::<u8>(1)?)
     }
 
     pub fn new(x_serv: &str) -> Result<Self, XInterfaceError> {
         println!("Initializing X interface.");
-        let mut sock_connector = Socket::new(x_serv)?;
-        let mut x_interface = XInterface{x_socket: sock_connector.clone()};
+        let sock_connector = Socket::new(x_serv)?;
+        let mut x_interface = XInterface{x_socket: sock_connector};
 
-        let (mut auth_name, mut auth_data) = get_auth().unwrap();
-        println!("Auth Name: {:?}, auth data: {:?}", u8_util::u8_to_str(&auth_name), u8_util::u8_to_str(&auth_data));
+        let (auth_name, auth_data) = get_auth().unwrap();
+        //println!("Auth Name: {:?}, auth data: {:?}", u8_util::u8_to_str(&auth_name), u8_util::u8_to_str(&auth_data));
 
-        auth_name[0] = 25;
-        sock_connector.write_all(vec![0x6C, 0, 11, 0, 0, 0])?;
-        /*sock_connector.write(&u16::try_from(auth_name.len()).unwrap().to_le_bytes()).unwrap();
-        sock_connector.write(&u16::try_from(auth_data.len()).unwrap().to_le_bytes()).unwrap();
-        sock_connector.write_all(vec![0, 0])?;
-        sock_connector.write_all(auth_name)?;
-        sock_connector.write(&[0; 3][..(4 - (sock_connector.buf_len() % 4)) % 4]).unwrap();
-        sock_connector.write_all(auth_data)?;
-        sock_connector.write(&[0; 3][..(4 - (sock_connector.buf_len() % 4)) % 4]).unwrap();*/
-        sock_connector.flush_all()?;
+        let auth_response = x_interface.send_authentication(auth_name, auth_data)?;
 
-        match sock_connector.read_u8()?{
+        match auth_response{
             0 => Err(XInterfaceError::AuthFailure(x_interface.auth_failure_read()?)),      //Failure
-            1 => {                                                                         //Success
-                x_interface.auth_success_read()?;
-                Ok(x_interface)
-            },
+            1 => Ok(x_interface.auth_success_read()?),                                     //Success
             2 => Err(XInterfaceError::AuthRequested(x_interface.auth_requested_read()?)),  //Authentication Request
             _ => Err(XInterfaceError::UnknownError)                                        //Cursed
         }
     }
 }
-
 
 const MIT_MAGIC_COOKIE_1: &[u8] = b"MIT-MAGIC-COOKIE-1";
 
@@ -89,7 +133,7 @@ const MIT_MAGIC_COOKIE_1: &[u8] = b"MIT-MAGIC-COOKIE-1";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Family(u16);
 
-#[allow(dead_code)]
+#[warn(dead_code)]
 impl Family {
     /// IPv4 connection to the server
     pub const INTERNET: Self = Self(0);
@@ -113,6 +157,7 @@ impl Family {
     pub const LOCAL_HOST: Self = Self(252);
 }
 
+#[warn(dead_code)]
 impl From<u16> for Family {
     fn from(value: u16) -> Self {
         Self(value)
@@ -121,6 +166,7 @@ impl From<u16> for Family {
 
 /// A single entry of an `.Xauthority` file.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[warn(dead_code)]
 pub(crate) struct AuthEntry {
     /// The protocol family to which the entry applies
     family: Family,
@@ -135,6 +181,7 @@ pub(crate) struct AuthEntry {
     data: Vec<u8>,
 }
 
+#[warn(dead_code)]
 mod file {
     //! Code for actually reading `~/.Xauthority`.
 

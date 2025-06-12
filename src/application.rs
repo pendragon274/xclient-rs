@@ -14,6 +14,12 @@ impl Display for ApplicationError {
     }
 }
 
+impl From<XInterfaceError> for ApplicationError{
+    fn from(x: XInterfaceError) -> Self {
+        ApplicationError::XInterfaceError(x)
+    }
+}
+
 ///Handles initialization of connection to X11 and provides an interface for using it.
 pub struct Application {
     _x_interface: XInterface
@@ -23,19 +29,6 @@ pub struct Application {
 impl Application {
     ///Generates a new application with an X11 connection.
     pub fn new() -> Result<Self, ApplicationError> {
-        let unwrap_x: XInterface;
-        let x_result = XInterface::new("/tmp/.X11-unix/X0");
-
-        match x_result {
-            Ok(x) => unwrap_x = x,
-            Err(e) =>{
-                println!("Connection to X server failed: {}", e);
-                return Err(ApplicationError::XInterfaceError(e));
-            }
-        }
-
-        //This line should be able to create an X window request.
-
-        Ok(Self {_x_interface: unwrap_x})
+        Ok(Self {_x_interface: XInterface::new("/tmp/.X11-unix/X0")?})
     }
 }
