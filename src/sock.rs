@@ -9,6 +9,92 @@ use std::time::{Duration, Instant};
 use libc::{c_int, close, connect, fcntl, read, send, sockaddr_un, socket, AF_UNIX, F_GETFL, F_SETFL, O_NONBLOCK, SOCK_STREAM};
 use crate::serializable::Serializable;
 
+#[macro_export]
+macro_rules! sock_write {
+    ($sock:expr; _:$len:expr, $($rest:tt)*) =>{
+        $sock.clear_write_buf();
+        $sock.write_discard_bytes($len);
+        sock_write!(@noclear $sock; $($rest)*);
+    };
+
+    ($sock:expr; $varname:ident, $($rest:tt)*) =>{
+        $sock.clear_write_buf();
+        $sock.write_serializable($varname)
+        sock_write!(@noclear $sock; $($rest)*);
+    };
+
+    ($sock:expr; _:$len:expr) => {
+        $sock.clear_write_buf();
+        $sock.write_discard_bytes($len);
+    };
+
+    ($sock:expr; $varname:ident) => {
+        $sock.clear_write_buf();
+        $sock.write_serializable($varname)?;
+    };
+
+    (@noclear $sock:expr; _:$len:expr, $($rest:tt)*) =>{
+        $sock.write_discard_bytes($len);
+        sock_write!(@noclear $sock; $($rest)*);
+    };
+
+    (@noclear $sock:expr; $varname:ident, $($rest:tt)*) =>{
+        $sock.write_serializable($varname)
+        sock_write!(@noclear $sock; $($rest)*);
+    };
+
+    (@noclear $sock:expr; _:$len:expr) => {
+        $sock.write_discard_bytes($len);
+    };
+
+    (@noclear $sock:expr; $varname:ident) => {
+        $sock.write_serializable($varname)?;
+    };
+}
+
+#[macro_export]
+macro_rules! sock_read {
+    ($sock:expr; _:$len:expr, $($rest:tt)*) =>{
+        $sock.clear_read_buf();
+        $sock.read_discard_bytes($len)?;
+        sock_read!(@noclear $sock; $($rest)*);
+    };
+
+    ($sock:expr; $varname:ident[$t:ty:$len:expr], $($rest:tt)*) =>{
+        $sock.clear_read_buf();
+        let $varname = $sock.read_serializable::<$t>($len)?;
+        sock_read!(@noclear $sock; $($rest)*);
+    };
+
+    ($sock:expr; _:$len:expr) =>{
+        $sock.clear_read_buf();
+        $sock.read_discard_bytes($len)?;
+    };
+
+    ($sock:expr; $varname:ident[$t:ty:$len:expr]) =>{
+        $sock.clear_read_buf();
+        let $varname = $sock.read_serializable::<$t>($len)?;
+    };
+
+    (@noclear $sock:expr; _:$len:expr, $($rest:tt)*) =>{
+        $sock.read_discard_bytes($len)?;
+        sock_read!(@noclear $sock; $($rest)*);
+    };
+
+    (@noclear $sock:expr; $varname:ident[$t:ty:$len:expr], $($rest:tt)*) =>{
+        let $varname = $sock.read_serializable::<$t>($len)?;
+        sock_read!(@noclear $sock; $($rest)*);
+    };
+
+    (@noclear $sock:expr; _:$len:expr) =>{
+        $sock.read_discard_bytes($len)?;
+    };
+
+    (@noclear $sock:expr; $varname:ident[$t:ty:$len:expr]) =>{
+        let $varname = $sock.read_serializable::<$t>($len)?;
+    };
+}
+
 pub struct Socket{
     socket_file_descriptor: Rc<Cell<Option<i32>>>,
     write_buf: Vec<u8>,
@@ -49,9 +135,13 @@ impl Socket{
     }
 
     pub fn write_pad(&mut self, mod_bytes: usize) -> Result<usize, SockError>{
-        let ret = (mod_bytes - (self.len_write_buf() % mod_bytes)) % mod_bytes;
-        self.write_all(vec![0; ret])?;
-        Ok(ret)
+        let len = (mod_bytes - (self.len_write_buf() % mod_bytes)) % mod_bytes;
+        self.write_all(vec![0; len])?;
+        Ok(len)
+    }
+
+    pub fn write_discard_bytes(&mut self, len: usize) -> Result<(), SockError>{
+        self.write_all(vec![0; len])
     }
 
     pub fn write_serializable<T>(&mut self, to_write: T) -> Result<(), SockError> where T: Serializable{
@@ -72,11 +162,6 @@ impl Socket{
         self.flush()?;
         Ok(())
     }
-
-    /*pub fn read_serializer<T>(&mut self, mut serializer: Serializer<T>) -> Result<T, SockError> {
-        serializer.deserialize()?;
-        serializer.obj
-    }*/
 
     pub fn read_serializable<T>(&mut self, num_bytes: usize) -> Result<T, SockError> where T: Serializable{
         Ok(T::from_bytes(&self.read_bytes(num_bytes)?))
@@ -278,18 +363,6 @@ impl Drop for Socket {
         }
     }
 }
-
-/*
-#[allow(dead_code)]
-pub mod u8_util{
-    pub fn u8_to_str(u8_vec: &Vec<u8>) -> String {
-        let mut my_char_vec: Vec<char> = Vec::with_capacity(u8_vec.len());
-        for u in u8_vec{
-            my_char_vec.push(u.clone() as char);
-        }
-        my_char_vec.iter().collect::<String>()
-    }
-}*/
 
 #[derive(Debug)]
 pub enum SockError{

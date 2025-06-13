@@ -1,5 +1,6 @@
 #[warn(unused_imports)]
 use std::fmt::{Display, Formatter};
+use crate::{sock_read, sock_write};
 use crate::sock::{SockError, Socket};
 
 #[derive(Debug)]
@@ -57,7 +58,11 @@ impl XInterface {
     #[allow(unused_variables)]
     fn auth_success_read(mut self) -> Result<Self, XInterfaceError>{
         //*****Preliminary Reads*****
-        self.x_socket.read_discard_bytes(1)?;
+        //self.x_socket.read_discard_bytes(1)?;
+        sock_read!{self.x_socket; _:1, major_version[u16:2], minor_version[u16:2], pad_indicator[u16:2]};
+        println!("Major: {}, minor: {}, pad_indicator: {}", major_version, minor_version, pad_indicator);
+        //println!("Major Version from macro: {}", test_var);
+        /*self.x_socket.read_discard_bytes(1)?;
         self.x_socket.read_serializable::<u16>(2)?; //Major version
         self.x_socket.read_serializable::<u16>(2)?; //Minor version
         let pad_indicator = self.x_socket.read_serializable::<u16>(2)?;              //8+2n+(v+p+m)/4
@@ -85,7 +90,7 @@ impl XInterface {
         let _screens: Vec<Vec<u8>> = Vec::with_capacity(screen_count as usize);
         for _ in 0..screen_count {
 
-        }
+        }*/
         //let roots = ((((pad_indicator-8)-(2*pixmap_format_count as u16))*4) - vendor_len) - pad_len as u16;
 
         Ok(self)

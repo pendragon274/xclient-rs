@@ -24,26 +24,3 @@ impl Serializable for String{
     fn bytes(&self) -> Vec<u8> { self.as_bytes().to_vec() }
     fn from_bytes(bytes: &Vec<u8>) -> Self { bytes.iter().map(|&b| b as char).collect::<String> () }
 }
-
-/*
-pub struct Serializer<T: Serializable>{
-    size: fn () -> usize,
-    input_bytes: fn (usize) -> Result<Vec<u8>, SockError>
-}
-
-impl<T: Serializable> Deserializer<T> {
-    pub fn serialize(&self, obj: T) -> Result<Vec<u8>, SockError> {
-        obj.bytes()
-        match self.obj {
-            Some(&obj) => obj.bytes(),
-            None => Err(SockError::UnknownError)
-        }
-    }
-
-    pub fn deserialize(&mut self) -> Result<(), SockError> {
-        let obj = T::from_bytes(self.input_bytes(self.size())?);
-        self.obj = Some(obj);
-        Ok(())
-    }
-}
-*/
